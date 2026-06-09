@@ -1,0 +1,55 @@
+{
+  "priority_rules": [
+    {
+      "id": "P0_red_flag",
+      "level": 0,
+      "description": "命中急诊危险信号时优先级最高，primary_department 必须为急诊科。",
+      "trigger_keywords": ["胸痛大汗", "呼吸困难", "嘴唇发紫", "意识不清", "抽搐", "剧烈头痛", "突然偏瘫", "口角歪斜", "大量出血", "严重外伤", "呕血", "黑便量多", "孕期出血", "胎动减少", "高热抽搐", "自杀", "自伤", "误服", "尿不出来"],
+      "primary_department": "急诊科"
+    },
+    {
+      "id": "P1_pediatrics",
+      "level": 1,
+      "description": "14 岁以下儿童患者优先考虑儿科，除非命中急诊危险信号。",
+      "condition": "age < 14",
+      "primary_department": "儿科"
+    },
+    {
+      "id": "P1_obstetrics",
+      "level": 1,
+      "description": "已知妊娠或可能妊娠的女性出现孕期相关症状时优先考虑产科。",
+      "condition": "pregnant == true",
+      "primary_department": "产科"
+    },
+    {
+      "id": "P2_fever_respiratory",
+      "level": 2,
+      "description": "发热伴呼吸道症状优先考虑发热门诊或呼吸内科。",
+      "trigger_keywords": ["发热", "发烧", "高烧", "咳嗽", "咳痰", "咽痛", "胸闷气短"],
+      "primary_department": "发热门诊",
+      "alternative_departments": ["呼吸内科"]
+    },
+    {
+      "id": "P3_specialty_match",
+      "level": 3,
+      "description": "症状明确指向某个专科时，按本知识库 departments/*.md 的科室定位推荐。"
+    },
+    {
+      "id": "P4_general_internal_fallback",
+      "level": 4,
+      "description": "症状不明确、多系统轻度症状、笼统主诉时由普通内科 / 全科医学科兜底。",
+      "trigger_keywords": ["浑身不舒服", "没精神", "乏力", "没力气", "总不舒服", "查不出原因", "体检异常"],
+      "primary_department": "普通内科"
+    },
+    {
+      "id": "P5_multi_department",
+      "level": 5,
+      "description": "多个科室均有可能时，输出 primary_department 和 alternative_departments，并降低 confidence。"
+    }
+  ],
+  "confidence_rules": {
+    "high": "症状关键词高度集中在某一个科室。",
+    "medium": "症状指向某科室，但存在 1-2 个交叉可能。",
+    "low": "症状笼统，多个科室都可能，需要追问。"
+  }
+}

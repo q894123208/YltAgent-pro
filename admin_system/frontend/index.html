@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Medical Agent 管理后台</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus@2.7.6/dist/index.css" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+    <div v-if="!authenticated" class="login-page">
+      <div class="login-card">
+        <div class="login-logo">医</div>
+        <h1>Medical Agent 管理后台</h1>
+        <p>请输入管理员账号密码</p>
+        <el-form @submit.prevent>
+          <el-form-item>
+            <el-input v-model="loginForm.username" placeholder="账号" size="large" @keyup.enter="login" />
+          </el-form-item>
+          <el-form-item>
+            <el-input v-model="loginForm.password" placeholder="密码" type="password" show-password size="large" @keyup.enter="login" />
+          </el-form-item>
+          <el-form-item>
+            <el-input v-model="apiBase" placeholder="Admin API" size="large" />
+          </el-form-item>
+          <el-button type="primary" size="large" class="login-button" :loading="loginLoading" @click="login">登录</el-button>
+        </el-form>
+      </div>
+    </div>
+
+    <el-container v-else class="layout">
+      <el-aside width="220px" class="sidebar">
+        <div class="brand">
+          <div class="brand-logo">医</div>
+          <div class="brand-title">medical-admin</div>
+        </div>
+        <el-menu :default-active="view" class="side-menu" @select="openView">
+          <el-menu-item index="dashboard"><span class="menu-icon">⌂</span><span>首页</span></el-menu-item>
+          <el-sub-menu index="system">
+            <template #title><span class="menu-icon">▣</span><span>系统管理</span></template>
+            <el-menu-item index="users"><span class="menu-icon">●</span><span>用户管理</span></el-menu-item>
+            <el-menu-item index="reports"><span class="menu-icon">▤</span><span>报告管理</span></el-menu-item>
+            <el-menu-item index="sessions"><span class="menu-icon">▰</span><span>问诊记录</span></el-menu-item>
+            <el-menu-item index="kb"><span class="menu-icon">◇</span><span>知识库</span></el-menu-item>
+          </el-sub-menu>
+        </el-menu>
+      </el-aside>
+
+      <el-container>
+        <el-header class="topbar">
+          <div class="breadcrumb">
+            <a @click="openView('dashboard')">首页</a>
+            <span v-if="view !== 'dashboard'">/</span>
+            <span v-if="view !== 'dashboard'">{{ viewTitle }}</span>
+          </div>
+          <div class="connection">
+            <el-input v-model="apiBase" size="small" placeholder="Admin API" />
+            <el-tag size="small" type="success">admin</el-tag>
+            <el-button size="small" @click="logout">退出登录</el-button>
+          </div>
+        </el-header>
+
+        <div class="tabs">
+          <button v-for="tab in tabs" :key="tab.key" :class="{ active: view === tab.key }" @click="openView(tab.key)">
+            {{ tab.label }}
+            <span v-if="tab.key !== 'dashboard'" @click.stop="closeTab(tab.key)">×</span>
+          </button>
+        </div>
+
+        <el-main>
+          <section v-show="view === 'dashboard'" class="page">
+            <div class="metric-grid">
+              <div v-for="item in metrics" :key="item.label" class="metric-card">
+                <span>{{ item.label }}</span>
+                <b>{{ item.value ?? 0 }}</b>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-title">系统状态</div>
+              <el-descriptions border :column="3">
+                <el-descriptions-item label="数据库">{{ stats.database?.type || '未知' }}</el-descriptions-item>
+                <el-descriptions-item label="知识库向量">{{ stats.chroma?.kb_count ?? 0 }}</el-descriptions-item>
+                <el-descriptions-item label="报告向量">{{ stats.chroma?.user_reports_count ?? 0 }}</el-descriptions-item>
+              </el-descriptions>
+            </div>
+            <div class="chart-grid">
+              <div class="panel">
+                <div class="panel-title">问诊场景分布</div>
+                <div ref="sceneChartRef" class="chart-box"></div>
+              </div>
+              <div class="panel">
+                <div class="panel-title">报告类型分布</div>
+                <div ref="docTypeChartRef" class="chart-box"></div>
+              </div>
+              <div class="panel chart-wide">
+                <div class="panel-title">近 14 天新增趋势</div>
+                <div ref="trendChartRef" class="chart-box chart-large"></div>
+              </div>
+            </div>
+          </section>
+
+          <section v-show="view === 'users'" class="page">
+            <div class="panel search-panel">
+              <el-input v-model="users.q" clearable placeholder="请输入姓名 / 手机号 / 身份证号 / user_id" @keyup.enter="loadUsers(1)" />
+              <el-button type="primary" @click="loadUsers(1)">查询</el-button>
+              <el-button @click="resetUsers">重置</el-button>
+            </div>
+            <div class="panel">
+              <el-table :data="users.rows" v-loading="loading.users" border stripe>
+                <el-table-column label="用户ID" min-width="230">
+                  <template #default="{ row }"><code>{{ text(row.user_id) }}</code></template>
+                </el-table-column>
+                <el-table-column label="姓名" min-width="120">
+                  <template #default="{ row }">{{ text(row.display_name) }}</template>
+                </el-table-column>
+                <el-table-column label="手机号" min-width="130">
+                  <template #default="{ row }">{{ text(row.phone || row.username) }}</template>
+                </el-table-column>
+                <el-table-column label="身份证号" min-width="180">
+                  <template #default="{ row }">{{ text(row.id_number) }}</template>
+                </el-table-column>
+                <el-table-column label="性别" width="90" align="center">
+                  <template #default="{ row }">{{ gender(row.gender) }}</template>
+                </el-table-column>
+                <el-table-column label="年龄" width="90" align="center">
+                  <template #default="{ row }">{{ row.age ?? '无' }}</template>
+                </el-table-column>
+                <el-table-column label="住址" min-width="180">
+                  <template #default="{ row }">{{ text(row.address) }}</template>
+                </el-table-column>
+                <el-table-column label="创建时间" min-width="170">
+                  <template #default="{ row }">{{ text(row.created_at) }}</template>
+                </el-table-column>
+                <el-table-column label="最后登录" min-width="170">
+                  <template #default="{ row }">{{ text(row.last_login_at) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="170" fixed="right" align="center">
+                  <template #default="{ row }">
+                    <el-button size="small" type="primary" @click="openUser(row.user_id)">详情</el-button>
+                    <el-button size="small" type="danger" @click="deleteUser(row.user_id)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <pager :state="users" :load="loadUsers"></pager>
+            </div>
+          </section>
+
+          <section v-show="view === 'reports'" class="page">
+            <div class="panel search-panel">
+              <el-input v-model="reports.userId" clearable placeholder="user_id" />
+              <el-input v-model="reports.q" clearable placeholder="报告名 / 类型 / doc_id" @keyup.enter="loadReports(1)" />
+              <el-button type="primary" @click="loadReports(1)">查询</el-button>
+              <el-button @click="resetReports">重置</el-button>
+              <el-button type="danger" plain :disabled="!reports.selected.length" @click="deleteSelectedReports">批量删除</el-button>
+              <el-button type="danger" :disabled="!reports.userId" @click="deleteUserReports">删除该用户全部报告</el-button>
+            </div>
+            <div class="panel">
+              <el-table :data="reports.rows" v-loading="loading.reports" border stripe @selection-change="onReportSelect">
+                <el-table-column type="selection" width="48" />
+                <el-table-column label="报告ID" min-width="210">
+                  <template #default="{ row }"><code>{{ text(row.doc_id) }}</code></template>
+                </el-table-column>
+                <el-table-column label="报告名称" min-width="220">
+                  <template #default="{ row }">{{ text(row.title || row.file_name) }}</template>
+                </el-table-column>
+                <el-table-column label="用户ID" min-width="210">
+                  <template #default="{ row }"><code>{{ text(row.user_id) }}</code></template>
+                </el-table-column>
+                <el-table-column label="姓名" width="140">
+                  <template #default="{ row }">{{ text(row.display_name) }}</template>
+                </el-table-column>
+                <el-table-column label="类型" width="130">
+                  <template #default="{ row }">{{ text(row.doc_type) }}</template>
+                </el-table-column>
+                <el-table-column label="置信度" width="110" align="center">
+                  <template #default="{ row }"><el-tag :type="confidenceType(row.confidence)">{{ confidence(row.confidence) }}</el-tag></template>
+                </el-table-column>
+                <el-table-column label="上传时间" min-width="170">
+                  <template #default="{ row }">{{ text(row.created_at) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="170" fixed="right" align="center">
+                  <template #default="{ row }">
+                    <el-button size="small" type="primary" @click="openReport(row.doc_id)">详情</el-button>
+                    <el-button size="small" type="danger" @click="deleteReport(row.doc_id)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <pager :state="reports" :load="loadReports"></pager>
+            </div>
+          </section>
+
+          <section v-show="view === 'sessions'" class="page">
+            <div class="panel search-panel">
+              <el-input v-model="sessions.userId" clearable placeholder="user_id" />
+              <el-select v-model="sessions.scene" clearable placeholder="全部场景">
+                <el-option label="线上问诊" value="consultation" />
+                <el-option label="智能分诊" value="triage" />
+              </el-select>
+              <el-button type="primary" @click="loadSessions(1)">查询</el-button>
+              <el-button @click="resetSessions">重置</el-button>
+              <el-button type="danger" plain :disabled="!sessions.selected.length" @click="deleteSelectedSessions">批量删除</el-button>
+              <el-button type="danger" :disabled="!sessions.userId" @click="deleteUserSessions">删除该用户全部问诊</el-button>
+            </div>
+            <div class="panel">
+              <el-table :data="sessions.rows" v-loading="loading.sessions" border stripe @selection-change="onSessionSelect">
+                <el-table-column type="selection" width="48" />
+                <el-table-column label="会话ID" min-width="210">
+                  <template #default="{ row }"><code>{{ text(row.id) }}</code></template>
+                </el-table-column>
+                <el-table-column label="标题" min-width="220">
+                  <template #default="{ row }">{{ text(row.title || '未命名会话') }}</template>
+                </el-table-column>
+                <el-table-column label="用户ID" min-width="210">
+                  <template #default="{ row }"><code>{{ text(row.user_id) }}</code></template>
+                </el-table-column>
+                <el-table-column label="场景" width="120">
+                  <template #default="{ row }"><el-tag :type="sceneType(row.scene)">{{ sceneName(row.scene) }}</el-tag></template>
+                </el-table-column>
+                <el-table-column label="消息数" width="90" align="center">
+                  <template #default="{ row }">{{ row.message_count ?? 0 }}</template>
+                </el-table-column>
+                <el-table-column label="更新时间" min-width="170">
+                  <template #default="{ row }">{{ text(row.updated_at) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="170" fixed="right" align="center">
+                  <template #default="{ row }">
+                    <el-button size="small" type="primary" @click="openSession(row.id)">详情</el-button>
+                    <el-button size="small" type="danger" @click="deleteSession(row.id)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <pager :state="sessions" :load="loadSessions"></pager>
+            </div>
+          </section>
+
+          <section v-show="view === 'kb'" class="page">
+            <div class="panel search-panel">
+              <el-upload
+                multiple
+                :auto-upload="false"
+                :show-file-list="false"
+                :on-change="onPickKbFile"
+                :on-remove="onPickKbFile"
+              >
+                <el-button>选择知识库文件（可多选）</el-button>
+              </el-upload>
+              <span class="file-name">
+                {{ kb.pickedFiles.length ? `已选择 ${kb.pickedFiles.length} 个文件` : '未选择文件' }}
+              </span>
+              <el-button type="primary" :loading="kb.busy" :disabled="!kb.pickedFiles.length" @click="uploadKb">上传并向量化</el-button>
+              <el-button @click="loadKb">查询</el-button>
+              <el-button type="warning" plain :loading="kb.rebuilding" @click="rebuildKb">重建全部向量</el-button>
+              <el-button type="danger" plain @click="clearKbVectors">清空知识库向量</el-button>
+              <el-button type="danger" @click="clearReportVectors">清空报告向量</el-button>
+              <div v-if="kb.busy || kb.rebuilding" class="kb-progress">
+                <el-progress
+                  :percentage="kb.busy ? kb.progress : kb.rebuildProgress"
+                  :status="(kb.busy ? kb.progress : kb.rebuildProgress) >= 100 ? 'success' : undefined"
+                />
+                <span>{{ kb.busy ? kb.progressText : '正在重建知识库向量，请稍候...' }}</span>
+              </div>
+            </div>
+            <div class="panel">
+              <el-table :data="kbPagedFiles" v-loading="loading.kb" border stripe>
+                <el-table-column label="文件名" min-width="220">
+                  <template #default="{ row }">{{ text(row.name) }}</template>
+                </el-table-column>
+                <el-table-column label="知识库类型" width="140">
+                  <template #default="{ row }"><el-tag>{{ text(row.kb_type) }}</el-tag></template>
+                </el-table-column>
+                <el-table-column label="大小" width="120">
+                  <template #default="{ row }">{{ size(row.size) }}</template>
+                </el-table-column>
+                <el-table-column label="路径" min-width="420" show-overflow-tooltip>
+                  <template #default="{ row }">{{ text(row.path) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="150" fixed="right" align="center">
+                  <template #default="{ row }">
+                    <el-button size="small" type="danger" @click="deleteKbFile(row)">删除文件和向量</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <div class="pager">
+                <el-pagination
+                  background
+                  layout="total, sizes, prev, pager, next, jumper"
+                  :total="kb.files.length"
+                  :page-size="kb.pageSize"
+                  :current-page="kb.page"
+                  :page-sizes="[10, 20, 50, 100]"
+                  @current-change="p => kb.page = p"
+                  @size-change="s => { kb.pageSize = s; kb.page = 1 }"
+                />
+              </div>
+            </div>
+          </section>
+        </el-main>
+      </el-container>
+    </el-container>
+
+    <el-dialog v-model="userDialog.open" title="用户详情" width="980px" top="5vh">
+      <div v-if="userDialog.data">
+        <el-descriptions border :column="2">
+          <el-descriptions-item label="用户ID"><code>{{ text(userDialog.data.user?.user_id) }}</code></el-descriptions-item>
+          <el-descriptions-item label="姓名">{{ text(userDialog.data.user?.display_name) }}</el-descriptions-item>
+          <el-descriptions-item label="手机号">{{ text(userDialog.data.user?.phone || userDialog.data.user?.username) }}</el-descriptions-item>
+          <el-descriptions-item label="身份证号">{{ text(userDialog.data.user?.id_number) }}</el-descriptions-item>
+          <el-descriptions-item label="性别">{{ gender(userDialog.data.user?.gender) }}</el-descriptions-item>
+          <el-descriptions-item label="年龄">{{ userDialog.data.user?.age ?? '无' }}</el-descriptions-item>
+          <el-descriptions-item label="住址" :span="2">{{ text(userDialog.data.user?.address) }}</el-descriptions-item>
+          <el-descriptions-item label="慢性病">{{ text(userDialog.data.user?.chronic_diseases) }}</el-descriptions-item>
+          <el-descriptions-item label="过敏史">{{ text(userDialog.data.user?.allergy_history) }}</el-descriptions-item>
+          <el-descriptions-item label="用药史">{{ text(userDialog.data.user?.medication_history) }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ text(userDialog.data.user?.created_at) }}</el-descriptions-item>
+          <el-descriptions-item label="最后登录">{{ text(userDialog.data.user?.last_login_at) }}</el-descriptions-item>
+        </el-descriptions>
+
+        <div class="detail-stats">
+          <div><span>报告</span><b>{{ userDialog.data.counts?.reports || 0 }}</b></div>
+          <div><span>问诊会话</span><b>{{ userDialog.data.counts?.sessions || 0 }}</b></div>
+          <div><span>问诊记录</span><b>{{ userDialog.data.counts?.encounters || 0 }}</b></div>
+          <div><span>预约</span><b>{{ userDialog.data.counts?.appointments || 0 }}</b></div>
+        </div>
+
+        <el-tabs v-model="userDialog.tab">
+          <el-tab-pane label="预约科室" name="appointments">
+            <div v-loading="userDialog.loadingAppointments" class="appointment-list">
+              <el-empty v-if="!userDialog.appointments.length" description="暂无预约记录" />
+              <div v-for="row in userDialog.appointments" :key="row.id" class="appointment-card">
+                <el-descriptions border :column="2">
+                  <el-descriptions-item label="预约科室">{{ text(row.department) }}</el-descriptions-item>
+                  <el-descriptions-item label="医生">{{ text(row.doctor) }} {{ text(row.doctor_title, '') }}</el-descriptions-item>
+                  <el-descriptions-item label="就诊日期">{{ text(row.visit_date) }}</el-descriptions-item>
+                  <el-descriptions-item label="就诊时段">{{ text(row.period) }}</el-descriptions-item>
+                  <el-descriptions-item label="就诊时间">{{ text(row.time_slot) }}</el-descriptions-item>
+                  <el-descriptions-item label="状态">{{ text(row.status) }}</el-descriptions-item>
+                  <el-descriptions-item label="创建时间" :span="2">{{ text(row.created_at) }}</el-descriptions-item>
+                </el-descriptions>
+              </div>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane label="报告记录" name="reports">
+            <el-table :data="userDialog.reports" v-loading="userDialog.loadingReports" border size="small">
+              <el-table-column label="报告名称" min-width="220">
+                <template #default="{ row }">{{ text(row.title || row.file_name) }}</template>
+              </el-table-column>
+              <el-table-column label="类型" prop="doc_type" width="130" />
+              <el-table-column label="上传时间" prop="created_at" min-width="170" />
+              <el-table-column label="操作" width="100" align="center">
+                <template #default="{ row }"><el-button size="small" type="primary" @click="openReport(row.doc_id)">查看</el-button></template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+          <el-tab-pane label="问诊记录" name="sessions">
+            <el-table :data="userDialog.sessions" v-loading="userDialog.loadingSessions" border size="small">
+              <el-table-column label="标题" min-width="220">
+                <template #default="{ row }">{{ text(row.title || '未命名会话') }}</template>
+              </el-table-column>
+              <el-table-column label="场景" width="120">
+                <template #default="{ row }"><el-tag :type="sceneType(row.scene)">{{ sceneName(row.scene) }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="消息数" prop="message_count" width="90" />
+              <el-table-column label="更新时间" prop="updated_at" min-width="170" />
+              <el-table-column label="操作" width="100" align="center">
+                <template #default="{ row }"><el-button size="small" type="primary" @click="openSession(row.id)">查看</el-button></template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+    </el-dialog>
+
+    <el-dialog v-model="reportDialog.open" title="报告详情" width="920px" top="5vh">
+      <div v-if="reportDialog.data" class="detail-block">
+        <el-descriptions border :column="2">
+          <el-descriptions-item label="报告ID"><code>{{ text(reportDialog.data.doc_id) }}</code></el-descriptions-item>
+          <el-descriptions-item label="用户ID"><code>{{ text(reportDialog.data.user_id) }}</code></el-descriptions-item>
+          <el-descriptions-item label="报告名称">{{ text(reportDialog.data.title || reportDialog.data.file_name) }}</el-descriptions-item>
+          <el-descriptions-item label="类型">{{ text(reportDialog.data.doc_type) }}</el-descriptions-item>
+          <el-descriptions-item label="置信度">{{ confidence(reportDialog.data.confidence) }}</el-descriptions-item>
+          <el-descriptions-item label="上传时间">{{ text(reportDialog.data.created_at) }}</el-descriptions-item>
+          <el-descriptions-item label="文件路径" :span="2"><span class="path-text">{{ text(reportDialog.data.file_path) }}</span></el-descriptions-item>
+        </el-descriptions>
+        <h3>AI 解析摘要</h3>
+        <div class="summary">{{ text(reportDialog.data.summary) }}</div>
+      </div>
+    </el-dialog>
+
+    <el-dialog v-model="sessionDialog.open" title="问诊详情" width="940px" top="5vh">
+      <div v-if="sessionDialog.data" class="detail-block">
+        <el-descriptions border :column="2">
+          <el-descriptions-item label="会话ID"><code>{{ text(sessionDialog.data.session?.id) }}</code></el-descriptions-item>
+          <el-descriptions-item label="用户ID"><code>{{ text(sessionDialog.data.session?.user_id) }}</code></el-descriptions-item>
+          <el-descriptions-item label="标题">{{ text(sessionDialog.data.session?.title) }}</el-descriptions-item>
+          <el-descriptions-item label="场景">{{ sceneName(sessionDialog.data.session?.scene) }}</el-descriptions-item>
+        </el-descriptions>
+        <div class="message-list">
+          <div v-for="m in sessionDialog.data.messages" :key="m.id" class="message-card" :class="m.role">
+            <div class="message-head">
+              <b>{{ m.role === 'user' ? '用户' : (m.role === 'assistant' ? 'AI' : m.role) }}</b>
+              <span>{{ text(m.created_at) }}</span>
+            </div>
+            <div class="message-content">{{ text(m.content) }}</div>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
+  </div>
+
+  <script src="https://unpkg.com/vue@3.4.27/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/element-plus@2.7.6/dist/index.full.min.js"></script>
+  <script src="https://unpkg.com/echarts@5.5.0/dist/echarts.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
